@@ -239,7 +239,7 @@ def scan_remote(remote, module: str, entry: str | None = None) -> dict:
     import json
 
     if entry is None:
-        html = remote.container("cat /opt/tea-garden/web/dist/index.html 2>/dev/null")
+        html = remote.container("cat /opt/webapp/web/dist/index.html 2>/dev/null")
         entry = find_entry(html) or ""
     out = remote.exec_python(SCAN_PY % {"assets": remote.target.assets,
                                         "entry": entry,

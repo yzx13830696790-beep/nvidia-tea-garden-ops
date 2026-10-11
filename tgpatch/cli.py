@@ -51,7 +51,7 @@ def cmd_probe(args) -> int:
         out = r.container("ls -1 %s | wc -l" % r.target.assets)
         print("  assets 文件数: %s" % "".join(c for c in out if c.isdigit()) or "?")
         print()
-        html = r.container("cat /opt/tea-garden/web/dist/index.html 2>/dev/null")
+        html = r.container("cat /opt/webapp/web/dist/index.html 2>/dev/null")
         entry = find_entry(html)
         print("  index.html 入口: %s" % entry)
         if entry:
@@ -77,7 +77,7 @@ def cmd_ls(args) -> int:
 def cmd_routes(args) -> int:
     with _remote(args) as r:
         if not args.path:
-            html = r.container("cat /opt/tea-garden/web/dist/index.html 2>/dev/null")
+            html = r.container("cat /opt/webapp/web/dist/index.html 2>/dev/null")
             entry = find_entry(html)
             print("入口: %s" % entry)
         else:

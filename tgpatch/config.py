@@ -87,13 +87,15 @@ class Target:
     """一台被改造的目标机 + 它上面运行的容器。"""
 
     host: str
-    ssh_user: str = "nvidia"
+    ssh_user: str = "deploy"
     ssh_password: str = ""
     ssh_port: int = 22
     sudo_password: str = ""          # 留空表示不需要 sudo 口令
-    container: str = "tea-garden"
-    assets: str = "/opt/tea-garden/web/dist/assets"
-    http_port: int = 28888
+    # 下面三项都是**占位示例值**，不是任何真实环境的默认值。
+    # 请按自己的部署实情在 .env / config.toml 里覆盖。
+    container: str = "webapp"
+    assets: str = "/opt/webapp/web/dist/assets"
+    http_port: int = 8080
 
     @property
     def base_url(self) -> str:
@@ -130,11 +132,11 @@ def _shquote(s: str) -> str:
 # 组装
 # --------------------------------------------------------------------------- #
 _DEFAULTS: dict[str, str] = {
-    "TG_SSH_USER": "nvidia",
+    "TG_SSH_USER": "deploy",
     "TG_SSH_PORT": "22",
-    "TG_CONTAINER": "tea-garden",
-    "TG_ASSETS": "/opt/tea-garden/web/dist/assets",
-    "TG_HTTP_PORT": "28888",
+    "TG_CONTAINER": "webapp",
+    "TG_ASSETS": "/opt/webapp/web/dist/assets",
+    "TG_HTTP_PORT": "8080",
 }
 
 _MISSING_HINT = """\
@@ -200,12 +202,13 @@ def load_target(require_password: bool = True, **overrides) -> Target:
 
     return Target(
         host=host,
-        ssh_user=overrides.get("ssh_user") or get("SSH_USER", "nvidia"),
+        ssh_user=overrides.get("ssh_user") or get("SSH_USER", "deploy"),
         ssh_password=ssh_password or "",
         ssh_port=_int("ssh_port", 22),
         sudo_password=overrides.get("sudo_password") if overrides.get("sudo_password") is not None
         else get("SUDO_PASSWORD"),
-        container=overrides.get("container") or get("CONTAINER", "tea-garden"),
-        assets=overrides.get("assets") or get("ASSETS", "/opt/tea-garden/web/dist/assets"),
-        http_port=_int("http_port", 28888),
+        # 以下三项的默认值是**占位示例**；真实值请写进 .env / config.toml
+        container=overrides.get("container") or get("CONTAINER", "webapp"),
+        assets=overrides.get("assets") or get("ASSETS", "/opt/webapp/web/dist/assets"),
+        http_port=_int("http_port", 8080),
     )

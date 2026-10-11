@@ -15,7 +15,7 @@
 
     SSH_HOST       目标机地址（必填）
     SSH_PORT       默认 22
-    SSH_USER       默认 nvidia
+    SSH_USER       默认 deploy
     SSH_PASSWORD   SSH 口令（必填）
     SSH_TIMEOUT    连接超时秒数，默认 15
 
@@ -37,7 +37,7 @@ def main() -> int:
         print("未指定 SSH_HOST", file=sys.stderr)
         return 64
 
-    user = os.environ.get("SSH_USER", "nvidia")
+    user = os.environ.get("SSH_USER", "deploy")
     password = os.environ.get("SSH_PASSWORD", "")
     port = int(os.environ.get("SSH_PORT", "22"))
     timeout = int(os.environ.get("SSH_TIMEOUT", "15"))

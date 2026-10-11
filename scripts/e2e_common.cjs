@@ -32,7 +32,7 @@ function loadPlaywright() {
  */
 async function run(opts, body) {
   const { chromium } = loadPlaywright()
-  const BASE = process.env.TG_BASE_URL || 'http://127.0.0.1:28888'
+  const BASE = process.env.TG_BASE_URL || 'http://127.0.0.1:8080'
   const URL_ = opts.url || (BASE + (opts.path || '/'))
   const SHOTS = process.env.TG_SHOT_DIR || __dirname
   const CHROME = process.env.TG_CHROME || undefined

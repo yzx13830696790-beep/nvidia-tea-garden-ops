@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """远端操作：宿主命令、容器内执行、字节级取回、md5 校验部署。
 
-分层是刻意的：宿主（nvidia 机器）-> Docker 容器（tea-garden）-> 容器内文件系统。
+分层是刻意的：宿主机 -> Docker 容器 -> 容器内文件系统。
 所有需要 sudo 的操作统一走 ``target.sudo_prefix()``，避免口令散落在各脚本里。
 """
 from __future__ import annotations

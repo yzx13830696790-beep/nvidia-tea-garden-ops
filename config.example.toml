@@ -1,15 +1,18 @@
 # 复制为 config.toml 后使用（优先级低于 .env 与进程环境变量）。
 # config.toml 已被 .gitignore 排除。
+#
+# 注意：host / ssh_password 是必须填的；ssh_user / container / assets / http_port
+# 给出的是**占位示例值**，请换成自己部署的实际情况。
 
 [target]
 host = "192.168.0.100"
-ssh_user = "nvidia"
+ssh_user = "deploy"
 ssh_password = "change-me"
 ssh_port = 22
 
 # sudo 口令。留空则沿用 ssh_password；免密 sudo 时显式设为 ""
 sudo_password = ""
 
-container = "tea-garden"
-assets = "/opt/tea-garden/web/dist/assets"
-http_port = 28888
+container = "webapp"
+assets = "/opt/webapp/web/dist/assets"
+http_port = 8080

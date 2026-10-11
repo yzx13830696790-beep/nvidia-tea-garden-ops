@@ -77,7 +77,7 @@ git clone <this-repo> && cd nvidia-tea-garden-ops
 pip install -r requirements.txt
 
 cp .env.example .env
-$EDITOR .env          # 填 TG_HOST 与 TG_SSH_PASSWORD
+$EDITOR .env          # 填 TG_HOST / TG_SSH_PASSWORD，并把容器名与路径换成实际值
 ```
 
 ### 1. 先核对身份
@@ -222,6 +222,9 @@ python tests/test_pipeline.py   # 自动按顺序跑完并比对每一步的 md5
 
 - **代码里没有任何明文口令。** 目标机地址、SSH / sudo 口令全部从 `.env` 或环境变量读取；
   缺失时直接报错，而不是用一个兜底默认值连上去。
+- **示例值一律是占位符。** `.env.example`、`config.example.toml` 以及代码里的默认值
+  （`deploy` / `webapp` / `/opt/webapp/web/dist/assets` / `8080`）都是编出来的，不对应
+  任何真实环境；真实值只存在于你本机那个被忽略的 `.env` 里。
 - `.env`、`config.toml`、`cases/*/fixtures/`（线上真实构建产物）、`cases/*/out/` 全部
   `.gitignore` 排除。
 - 部署前自动备份，`rollback` 子命令可一键还原。
