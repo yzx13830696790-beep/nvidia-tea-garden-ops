@@ -4,6 +4,8 @@
     python -m tgpatch probe                        核对目标机身份
     python -m tgpatch routes [--path /task-scheduling]   看路由 -> chunk 映射
     python -m tgpatch locate PickerVehicleData     找出活跃 chunk（含僵尸副本告警）
+    python -m tgpatch chunkmap dist/assets         构建产物 -> 源文件映射（需 .js.map）
+    python -m tgpatch chunkmap dist/assets --lookup "Math.max(85,Math.min(100,"
     python -m tgpatch pull PickerVehicleData-x.js -o work/   字节级取回
     python -m tgpatch esm work/*.js                本地 ESM 语法校验
     python -m tgpatch deploy work out.js --tag veh 部署 + md5 校验
@@ -14,9 +16,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
+from . import sourcemap as smap
 from .config import ConfigError, load_target
 from .locate import find_entry, parse_map_deps, parse_routes, scan_remote
 from .patch import balanced
@@ -113,6 +117,69 @@ def cmd_locate(args) -> int:
     return 0
 
 
+def cmd_chunkmap(args) -> int:
+    assets = Path(args.assets_dir)
+    if not assets.is_dir():
+        print("目录不存在: %s" % assets, file=sys.stderr)
+        return 2
+
+    # -- 模式一：拿一段产物代码，反查它来自源码哪一行 --
+    if args.lookup:
+        hits = 0
+        for mp in smap.iter_maps(assets):
+            if args.chunk and args.chunk not in mp.name:
+                continue
+            try:
+                sm = smap.SourceMap.load(mp)
+            except smap.SourceMapError:
+                continue
+            pos = sm.lookup_text(args.lookup)
+            if pos:
+                hits += 1
+                print("%-44s -> %s" % (sm.file or mp.name[:-4], pos))
+        if not hits:
+            print("没有 chunk 含这段文本: %r" % args.lookup)
+            return 1
+        return 0
+
+    # -- 模式二：反查某个源文件被编译进了哪些 chunk --
+    if args.source:
+        rev = smap.reverse_index(assets)
+        rows = [(s, c) for s, c in sorted(rev.items())
+                if args.source.lower() in s.lower()]
+        if not rows:
+            print("没有源文件匹配: %r" % args.source)
+            return 1
+        for src, chunks in rows:
+            print("%-64s %s" % (src, ", ".join(chunks)))
+        print("\n共 %d 个源文件" % len(rows))
+        return 0
+
+    # -- 模式三：默认列出 chunk -> 源文件 --
+    table = smap.scan_dir(assets)
+    if args.chunk:
+        table = {k: v for k, v in table.items() if args.chunk in k}
+    js_total = len(list(assets.glob("*.js")))
+    print("assets 目录 : %s" % assets)
+    print("带 map 的 chunk: %d 个（目录内 .js 共 %d 个）" % (len(table), js_total))
+    if len(table) < js_total:
+        print("              （没列出的 chunk 说明构建时未产出 sourcemap）")
+    print()
+    for chunk, srcs in table.items():
+        print(chunk)
+        for s in srcs:
+            print("    %s" % s)
+    print("\n共 %d 个 chunk" % len(table))
+
+    if args.json:
+        out = Path(args.json)
+        out.write_text(json.dumps(
+            {"chunks": table, "reverse": smap.reverse_index(assets)},
+            ensure_ascii=False, indent=2), encoding="utf-8")
+        print("映射表已写出: %s" % out)
+    return 0
+
+
 def cmd_pull(args) -> int:
     with _remote(args) as r:
         for name in args.names:
@@ -202,6 +269,14 @@ def build_parser() -> argparse.ArgumentParser:
     s = add("locate", cmd_locate, "定位模块的活跃 chunk（并列出僵尸副本）")
     s.add_argument("module")
     s.add_argument("--entry", default=None, help="入口文件名（默认自动探测）")
+
+    s = add("chunkmap", cmd_chunkmap,
+            "用 .js.map 建立 产物 chunk <-> 源文件 的映射（本地目录，不连远端）")
+    s.add_argument("assets_dir", help="含 .js 与 .js.map 的构建产出目录，如 dist/assets")
+    s.add_argument("--chunk", help="只看文件名含该子串的 chunk")
+    s.add_argument("--source", help="反向模式：查源文件（子串）被编译进哪些 chunk")
+    s.add_argument("--lookup", help="反查模式：给出产物里的一段文本，返回它来自源码哪一行")
+    s.add_argument("--json", help="把完整映射表写成 JSON")
 
     s = add("pull", cmd_pull, "从容器字节级取回文件")
     s.add_argument("names", nargs="+")

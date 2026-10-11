@@ -1,5 +1,8 @@
 # 案例 03 · AI 任务调度系统：2023 → 2026
 
+> **两种改法**：[`patch.py`](patch.py) 是**字节级**方案（只有构建产物时用）；
+> [`source-level.md`](source-level.md) 是**源码级**方案，含全部 20 处日期的逐行清单。
+
 | 项 | 值 |
 |---|---|
 | 模块 | `PeriodicTaskArrangement`、`EmergencyTaskQueue` |

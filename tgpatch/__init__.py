@@ -19,21 +19,30 @@ config    目标机 / 容器 / 凭据配置（全部走环境变量，代码内�
 ssh       SSH 执行器（paramiko，缺失时回退到 scripts/ssh_run.py）
 remote    远端操作：宿主命令、容器内执行、字节级取回、md5 校验部署
 locate    入口识别与活跃 chunk 定位
+sourcemap 构建产物与源码的映射（用 .js.map 把 chunk 精确映射回 src/）
 patch     字节级补丁引擎（替换表 + 前置/后置断言 + 差异聚类 + 配平检查）
 validate  ESM 语法校验（Node vm.SourceTextModule）
 verify    HTTP 层校验与 playwright 端到端辅助
 cli       统一命令行入口
+
+两条改造路径
+------------
+有源码时走**源码级**：改 ``src/`` → ``vite build`` → 部署新产物，见 ``docs/source-level.md``。
+拿不到源码时走**字节级**：本包主体，见 ``docs/methodology.md``。
+``sourcemap`` 是把两者接起来的工具——有 map 在，字节级改动能精确反查到源码位置。
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 from .config import Target, load_target          # noqa: F401
 from .ssh import SSHRunner                        # noqa: F401
 from .remote import Remote                        # noqa: F401
 from .patch import Edit, PatchEngine, diff_regions, balanced  # noqa: F401
+from .sourcemap import Position, SourceMap        # noqa: F401
 
 __all__ = [
     "Target", "load_target",
     "SSHRunner", "Remote",
     "Edit", "PatchEngine", "diff_regions", "balanced",
+    "SourceMap", "Position",
 ]

@@ -1,5 +1,9 @@
 # 案例 01 · 采摘机器人车载运行数据流：成功率区间改为 78~95
 
+> **两种改法**：[`patch.py`](patch.py) 是**字节级**方案（只有构建产物时用）；
+> [`source-level.md`](source-level.md) 是**源码级**方案（拿得到 `src/` 时用），
+> 精确到文件与行号，并说明为什么不能用 `clamp`。
+
 | 项 | 值 |
 |---|---|
 | 页面 | `/device-management/picker-vehicle-data` |

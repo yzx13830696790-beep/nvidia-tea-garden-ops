@@ -2,18 +2,29 @@
 
 ![regression](https://github.com/yzx13830696790-beep/nvidia-tea-garden-ops/actions/workflows/regression.yml/badge.svg)
 
-果安云平台（tea-garden）前端构建产物的**字节级改造工具箱**。
+果安云平台（tea-garden）前端的**可验证改造工具箱**——支持源码级与字节级两条路径。
 
 线上是一套 Vite + Vue3 打包出来的 SPA：模块被切成带内容 hash 的 chunk，import 关系由入口
-文件里的 `__vite__mapDeps` 索引数组决定。源码不可得，但需求（改数值、加一条记录、换年份、
-加一个设备类型）必须落到线上。这个仓库就是为此沉淀下来的一套可复现、可验证的流程。
+文件里的 `__vite__mapDeps` 索引数组决定。需求（改数值、加一条记录、换年份、加一个设备类型）
+必须落到线上，而这个仓库提供两条路：
+
+| 路径 | 前提 | 流程 |
+|---|---|---|
+| **源码级**（首选） | 拿得到 `src/` 且能跑通 `vite build` | 改 `.vue` → 构建 → 部署新产物 |
+| **字节级**（兜底） | 只有 `dist/`，或构建环境已不可复现 | 定位活跃 chunk → 字节级精确替换 → 部署 |
 
 ```
-定位活跃 chunk  →  字节级精确替换（带命中数断言）  →  ESM 语法校验
-    →  部署进容器（md5 校验 + 自动备份）  →  HTTP 校验  →  浏览器端到端验证
+字节级：定位活跃 chunk  →  字节级精确替换（带命中数断言）  →  ESM 语法校验
+          →  部署进容器（md5 校验 + 自动备份）  →  HTTP 校验  →  浏览器端到端验证
+
+源码级：改 src/*.vue  →  vue-tsc + vite build  →  整目录部署  →  同一套三层验证
 ```
 
 一句话原则：**改之前先证明只有一个地方要改；改之后先证明没有别的地方被改到。**
+
+两条路径不是"哪个更好"，而是对应两种现实：源码级有类型检查兜底、改动可读；
+字节级不依赖构建环境、能精确落在一份**可能已经漂移**的产物上。真实项目里最常见的
+恰恰是后者——源码在，但线上那份产物比源码新。详见 [docs/source-level.md](docs/source-level.md)。
 
 ---
 
@@ -44,6 +55,7 @@ tgpatch/                 核心库
 ├── ssh.py               SSH 执行器（paramiko，缺失时回退到 scripts/ssh_run.py）
 ├── remote.py            宿主命令 / 容器内执行 / 字节级取回 / md5 校验部署 / 回滚
 ├── locate.py            入口识别、路由→chunk 映射、活跃副本判定、僵尸检测
+├── sourcemap.py         用 .js.map 把 chunk 精确映射回 src/（含位置反查）
 ├── patch.py             字节级补丁引擎（替换表 + 前置/后置断言 + 可逆性自证 + 差异聚类）
 ├── validate.py          ESM 语法校验与沙箱求值
 ├── verify.py            HTTP 校验、浏览器端到端、随机游走蒙特卡洛
@@ -53,11 +65,17 @@ cases/                   五个真实改造案例（均已在线上验证过）
 ├── 01-picker-success-rate/          车载数据流成功率区间改为 78~95（5 处）
 ├── 02-periodic-picking-task/        周期性任务列表新增"果园自动采摘任务"（9 处）
 ├── 03-scheduling-year-2023-2026/    调度系统 2023 → 2026（2 文件 20 处）
-├── 04-multi-device-picking-robot/   多机协同新增"采摘机器人-01"（4 处）
+├── 04-multi-device-picking-robot/   多机协同新增"采摘机器人-01"（源码级 5 处 / 字节级 4 处）
 └── 05-periodic-enable-default-off/  任务列表"启用"开关初始全部关闭（3 处）
+    每个案例目录下：
+      patch.py           字节级方案（声明式替换表 + 断言）
+      source-level.md    源码级方案（精确到文件与行号）
+      e2e.js             浏览器端到端断言
+      README.md          需求、为什么是这么多处、验证方法
 
 scripts/
 ├── esm_check.cjs        ESM 语法校验器（Node vm.SourceTextModule）
+├── e2e_common.cjs       端到端公共层（登录、选页面、等渲染）
 └── ssh_run.py           独立 SSH runner（tgpatch.ssh 的降级路径）
 
 tests/
@@ -65,7 +83,10 @@ tests/
 └── test_pipeline.py     端到端回归：按 02→03→05 跑完并逐环节比对 md5（需夹具）
 
 .github/workflows/regression.yml   CI：引擎自检 + md5 回归
-docs/                    方法论与踩坑集
+docs/
+├── methodology.md       字节级方法论与踩坑集
+├── source-level.md      源码级路径：什么时候用、怎么和字节级互相印证
+└── troubleshooting.md   故障排查
 ```
 
 ---
@@ -135,6 +156,38 @@ python -m tgpatch rollback PickerVehicleData-BWUD9G8B.js PickerVehicleData-BWUD9
 
 ---
 
+## 用 sourcemap 把产物对回源码
+
+构建产物里的 `.js.map` 能让"改哪个 chunk""改的是源码哪一行"从推断变成确定答案。
+本地目录即可用，不连远端：
+
+```bash
+# chunk -> 源文件（哪些 .vue 编译进了这个 chunk）
+python -m tgpatch chunkmap dist/assets --chunk PeriodicTaskArrangement
+
+# 源文件 -> chunk（改一个 .vue 要同步部署哪几个产物）
+python -m tgpatch chunkmap dist/assets --source TaskScheduling/components
+
+# 产物里的一段代码，反查它来自源码哪一行
+python -m tgpatch chunkmap dist/assets --lookup "Math.max(85,Math.min(100,"
+#   PickerVehicleData-C_olpgXX.js -> src/views/DeviceManagement/PickerVehicleData.vue:433:35
+
+# 导出完整映射表
+python -m tgpatch chunkmap dist/assets --json chunk-map.json
+```
+
+它给字节级路径补上了最关键的一块：**改动位置可被评审**。原来只能说"我改了产物里第
+25349 个字节处"，现在能指到"源码第 433 行"。
+
+一个真实的印证：字节级补丁说案例 02 的 9 处改动落在 `PeriodicTaskArrangement` 这一个
+chunk 里；`chunkmap` 独立给出这个 chunk 恰好由 4 个源文件编译而成，9 处正好分布其中。
+
+> 实现上有个坑值得记住：Source Map v3 的列号按 **UTF-16 码元**计，不是字节。
+> 第一版按字节算，在纯 ASCII 的 chunk 上结果正好正确，换到中文密集的 chunk 上
+> 行号偏了 100 多行。这条已经钉进 `tests/test_engine.py`。
+
+---
+
 ## 补丁引擎的三条硬规则
 
 ```python
@@ -167,8 +220,9 @@ python tests/test_engine.py      # 不需要夹具、不需要凭据，克隆下
 ```
 
 夹具是线上真实构建产物、不入库，所以 `test_pipeline.py` 对任何克隆者都是空转的（只打印
-一行「跳过」）。`test_engine.py` 用**合成字节**把引擎的每条硬规则都钉了一遍：入口识别绕开
-Cesium、路由块边界、僵尸副本判定、命中数 / 可逆性 / 配平 / 区域数 / 原子写，以及
+一行「跳过」）。`test_engine.py` 用**合成字节**把引擎的每条硬规则都钉了一遍（97 项）：
+入口识别绕开 Cesium、路由块边界、僵尸副本判定、命中数 / 可逆性 / 配平 / 区域数 / 原子写、
+sourcemap 的 VLQ 往返与 UTF-16 列号语义，以及
 **「反射式回弹 vs clamp 冻结在边界」**——把当初那个真实 bug 变成了一条会红的断言：
 
 ```

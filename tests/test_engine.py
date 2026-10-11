@@ -16,7 +16,9 @@
 3. 活跃副本判定：同名多副本 + 僵尸副本识别
 4. 补丁引擎五条硬规则：命中数、可逆性、配平、区域数、原子写
 5. 反射式回弹 vs clamp：把「冻在边界」这个真实 bug 变成一条可回归的断言
-6. 全仓库 Python 语法 + ESM 语法
+6. sourcemap 反查：VLQ 往返、mappings 增量解码、源路径归一、位置反查
+   （含「列号按 UTF-16 码元而非字节」这条曾经踩过的坑）
+7. 全仓库 Python 语法 + ESM 语法
 
 运行：
     python tests/test_engine.py
@@ -35,7 +37,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from tgpatch import locate, patch, validate, verify  # noqa: E402
+from tgpatch import locate, patch, sourcemap, validate, verify  # noqa: E402
 from tgpatch.patch import PatchEngine, PatchError  # noqa: E402
 
 # CI 上把「环境缺失」当失败，避免测试静默空转
@@ -312,10 +314,155 @@ def t_walk() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 6. 语法自检
+# 6. sourcemap 反查（产物 -> 源码）
+# --------------------------------------------------------------------------- #
+def _vlq_encode(values) -> str:
+    """把整数列表编成 base64 VLQ——测试里用来自造 mappings 字符串。
+
+    有了它才能对 `decode_vlq` 做往返断言，而不是只对比几个硬编码的期望值。
+    """
+    out = ""
+    for v in values:
+        x = (abs(v) << 1) | (1 if v < 0 else 0)
+        while True:
+            digit = x & 31
+            x >>= 5
+            if x:
+                digit |= 32
+            out += sourcemap._B64[digit]
+            if not x:
+                break
+    return out
+
+
+def _make_map(tmp: Path, stem: str, sources, contents, mappings, file=None) -> Path:
+    import json as _json
+    code = tmp / (stem + ".js")
+    if not code.exists():
+        code.write_text("/* placeholder */\n", encoding="utf-8")
+    mp = tmp / (stem + ".js.map")
+    mp.write_text(_json.dumps({
+        "version": 3,
+        "file": file or (stem + ".js"),
+        "sources": list(sources),
+        "sourcesContent": list(contents),
+        "names": [],
+        "mappings": mappings,
+    }, ensure_ascii=False), encoding="utf-8")
+    return mp
+
+
+def t_sourcemap() -> None:
+    section("6) sourcemap 反查 —— 产物位置如何映射回源码")
+
+    # 6.1 VLQ 编解码往返
+    ck(sourcemap.decode_vlq("AAAA") == [0, 0, 0, 0], "decode_vlq('AAAA') == 4 个 0")
+    ck(sourcemap.decode_vlq("gB") == [16], "decode_vlq('gB') == 16（跨字节）")
+    for vals in ([0], [1], [-1], [16], [-16], [31], [-1000], [4, 0, 1, 0], [0, 0, 0, 0, 0]):
+        enc = _vlq_encode(vals)
+        ck(sourcemap.decode_vlq(enc) == vals, "VLQ 往返 %s" % (vals,), enc)
+    ok, name = raises(lambda: sourcemap.decode_vlq("A!"), sourcemap.SourceMapError)
+    ck(ok, "VLQ 遇到非法字符报错", name)
+    ok, name = raises(lambda: sourcemap.decode_vlq("g"), sourcemap.SourceMapError)
+    ck(ok, "VLQ 以续位结尾报错（数据不完整）", name)
+
+    # 6.2 mappings 解码：除首字段外都是相对前一段的增量
+    segs = sourcemap.decode_mappings("AAAA;AACA")
+    ck(len(segs) == 2, "mappings 按 ; 切成 2 个生成行")
+    ck(segs[0] == [(0, 0, 0, 0, -1)], "第 0 行 1 个段，指向源码 0:0")
+    ck(segs[1] == [(0, 0, 1, 0, -1)], "第 1 行 src_line 递增到 1")
+
+    # 只有生成列的单字段段不改变源码状态（规范如此，最容易写错的一条）
+    segs2 = sourcemap.decode_mappings("AAAA," + _vlq_encode([4]) + "," + _vlq_encode([4, 0, 1, 0]))
+    ck([s[0] for s in segs2[0]] == [0, 4, 8], "单字段段只推进生成列")
+    ck(segs2[0][1][1] == -1 and segs2[0][2][2] == 1, "单字段段不污染 src_idx/src_line")
+
+    ok, name = raises(lambda: sourcemap.SourceMap.from_dict({"version": 2}),
+                      sourcemap.SourceMapError)
+    ck(ok, "非 v3 的 sourcemap 报错", name)
+
+    # 6.3 源路径归一
+    ck(sourcemap.strip_query("X.vue?vue&type=script") == "X.vue", "strip_query 去掉查询串")
+    ck(sourcemap.utf16_len("中文") == 2, "utf16_len 汉字各占 1 个码元")
+    ck(sourcemap.utf16_len("\U0001d11e") == 2, "utf16_len 补充平面字符占 2 个码元")
+
+    tmp = Path(tempfile.mkdtemp(prefix="tgsm-"))
+    try:
+        # 6.4 位置反查：列号必须按 UTF-16 码元算
+        #
+        # 造一行 `中文字符NEEDLE`：NEEDLE 在第 4 个字符处（UTF-16 列 4），
+        # 但字节偏移是 12（汉字 3 字节 × 4）。mappings 里放三个段
+        # （列 0 -> 源码行 0、列 4 -> 行 1、列 8 -> 行 2），于是：
+        #   按码元算列 -> 命中第 2 段 -> 源码行 2（1 起始）
+        #   按字节算列 -> 命中第 3 段 -> 源码行 3（错）
+        gen = "中文字符NEEDLE"
+        code_file = tmp / "utf16.js"
+        code_file.write_text(gen + "\n", encoding="utf-8")
+        mappings = ",".join([
+            _vlq_encode([0, 0, 0, 0]),          # 列 0  -> 源码 0:0
+            _vlq_encode([4, 0, 1, 0]),          # 列 4  -> 源码 1:0
+            _vlq_encode([4, 0, 1, 0]),          # 列 8  -> 源码 2:0
+        ])
+        mp = _make_map(tmp, "utf16", ["../../src/A.vue"], ["l1\nl2\nl3\n"], mappings)
+        sm = sourcemap.SourceMap.load(mp)
+        ck(sm.source_relpath(0) == "src/A.vue", "source_relpath 剥掉 ../", sm.source_relpath(0))
+        ck(sm.original_source(0) == "l1\nl2\nl3\n", "original_source 取回源内容")
+        ck(sm.has_content(), "has_content 识别 sourcesContent 存在")
+        p = sm.lookup_text("NEEDLE")
+        ck(p is not None and p.line == 2,
+           "中文行：列号按 UTF-16 码元而非字节", str(p))
+        ck(p is not None and p.source == "src/A.vue" and p.column == 1,
+           "反查带回源文件与列号", str(p))
+        ck(sm.lookup_text("不存在的片段") is None, "搜不到时返回 None")
+        ck(sm.original_position(99, 0) is None, "生成行越界返回 None")
+        ck(sm.original_position(0, 0) is not None, "列 0 有映射")
+
+        # 纯 ASCII 行上字节列与码元列一致（当初这个 bug 就是在这里被漏掉的）
+        code_file.write_text("abcdefNEEDLE\n", encoding="utf-8")
+        mp2 = _make_map(tmp, "utf16", ["../../src/A.vue"], ["l1\nl2\nl3\n"], mappings)
+        ck(sourcemap.SourceMap.load(mp2).lookup_text("NEEDLE").line == 2,
+           "ASCII 行同样命中源码行 2")
+
+        # 6.5 目录级扫描与反向索引（放到独立子目录，避免被上面的 utf16.js 干扰）
+        sub = tmp / "scan"
+        sub.mkdir()
+        _make_map(sub, "c1", ["../../src/a.vue", "../../src/b.vue"], ["a", "b"], "")
+        _make_map(sub, "c2", ["../../src/b.vue"], ["b"], "")
+        table = sourcemap.scan_dir(sub)
+        ck(set(table) == {"c1.js", "c2.js"}, "scan_dir 扫到两个 chunk", str(sorted(table)))
+        ck(table["c1.js"] == ["src/a.vue", "src/b.vue"],
+           "scan_dir: chunk -> 多个源文件", str(table.get("c1.js")))
+        ck(table.get("c2.js") == ["src/b.vue"], "scan_dir: 单源文件 chunk")
+        rev = sourcemap.reverse_index(sub)
+        ck(rev.get("src/b.vue") == ["c1.js", "c2.js"],
+           "reverse_index: 一个源文件出现在两个 chunk 里", str(rev.get("src/b.vue")))
+        ck(sourcemap.find_source(sub, "A.VUE") == {"src/a.vue": ["c1.js"]},
+           "find_source 大小写不敏感", str(sourcemap.find_source(sub, "A.VUE")))
+        ck(sourcemap.find_source(sub, "b.vue") == {"src/b.vue": ["c1.js", "c2.js"]},
+           "find_source 能列出多个 chunk", str(sourcemap.find_source(sub, "b.vue")))
+        ck(sourcemap.SourceMap.load(mp2).code_path == tmp / "utf16.js",
+           "code_path 由 .js.map 推出 .js")
+
+        # 6.6 sourcesContent 缺失不应崩
+        import json as _json
+        p3 = tmp / "nocontentA.js.map"
+        p3.write_text(_json.dumps({
+            "version": 3, "file": "nocontentA.js",
+            "sources": ["../../src/a.vue"], "names": [], "mappings": "",
+        }), encoding="utf-8")
+        sm3 = sourcemap.SourceMap.load(p3)
+        ck(sm3.original_source(0) is None and not sm3.has_content(),
+           "缺 sourcesContent 时返回 None 而不抛异常")
+        ck(sm3.unique_sources() == ["src/a.vue"], "缺内容时源路径仍可用")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# --------------------------------------------------------------------------- #
+# 7. 语法自检
 # --------------------------------------------------------------------------- #
 def t_syntax() -> None:
-    section("6) 语法自检")
+    section("7) 语法自检")
 
     # 6.1 全仓库 Python
     bad, n = [], 0
@@ -349,7 +496,7 @@ def t_syntax() -> None:
 # 7. 包导入
 # --------------------------------------------------------------------------- #
 def t_package() -> None:
-    section("7) 包导入（paramiko 缺失也应可用）")
+    section("8) 包导入（paramiko 缺失也应可用）")
 
     import tgpatch
     ck(bool(tgpatch.__version__), "tgpatch 可导入", "version=%s" % tgpatch.__version__)
@@ -361,7 +508,8 @@ def t_package() -> None:
 def main() -> int:
     print("tgpatch 引擎自检（不依赖线上真实 chunk）")
     print("仓库根目录: %s" % ROOT)
-    for fn in (t_entry, t_routes, t_versions, t_engine, t_walk, t_syntax, t_package):
+    for fn in (t_entry, t_routes, t_versions, t_engine, t_walk, t_sourcemap,
+               t_syntax, t_package):
         fn()
 
     ok = all(r[0] for r in results)

@@ -1,5 +1,9 @@
 # 案例 04 · 多机协同工作模式：新增「采摘机器人-01」
 
+> **两种改法**：[`patch.py`](patch.py) 是**字节级**方案（4 处）；
+> [`source-level.md`](source-level.md) 是**源码级**方案（**5 处**——多出的一处是
+> TypeScript 类型联合，不补上 `vue-tsc` 会直接让构建失败）。
+
 | 项 | 值 |
 |---|---|
 | 页面 | `/task-scheduling/multi-device-collaboration` |
