@@ -1,5 +1,7 @@
 # nvidia-tea-garden-ops
 
+![regression](https://github.com/yzx13830696790-beep/nvidia-tea-garden-ops/actions/workflows/regression.yml/badge.svg)
+
 果安云平台（tea-garden）前端构建产物的**字节级改造工具箱**。
 
 线上是一套 Vite + Vue3 打包出来的 SPA：模块被切成带内容 hash 的 chunk，import 关系由入口
@@ -58,7 +60,11 @@ scripts/
 ├── esm_check.cjs        ESM 语法校验器（Node vm.SourceTextModule）
 └── ssh_run.py           独立 SSH runner（tgpatch.ssh 的降级路径）
 
-tests/test_pipeline.py   端到端回归：按 02→03→05 跑完并逐环节比对 md5
+tests/
+├── test_engine.py       引擎自检：合成字节，不依赖专有夹具（CI 实际执行的就是它）
+└── test_pipeline.py     端到端回归：按 02→03→05 跑完并逐环节比对 md5（需夹具）
+
+.github/workflows/regression.yml   CI：引擎自检 + md5 回归
 docs/                    方法论与踩坑集
 ```
 
@@ -151,6 +157,28 @@ result.write("out/chunk.js")
 
 另外两条默认开启：**差异区域聚类**（差异按间隔合并成区域，区域数应等于需求改动点个数）与
 **原子写**（先写临时文件再替换，中途失败不留半个 chunk）。
+
+---
+
+## 自检与 CI
+
+```bash
+python tests/test_engine.py      # 不需要夹具、不需要凭据，克隆下来即可跑
+```
+
+夹具是线上真实构建产物、不入库，所以 `test_pipeline.py` 对任何克隆者都是空转的（只打印
+一行「跳过」）。`test_engine.py` 用**合成字节**把引擎的每条硬规则都钉了一遍：入口识别绕开
+Cesium、路由块边界、僵尸副本判定、命中数 / 可逆性 / 配平 / 区域数 / 原子写，以及
+**「反射式回弹 vs clamp 冻结在边界」**——把当初那个真实 bug 变成了一条会红的断言：
+
+```
+[OK] 最长贴边连续点数显著优于 clamp（这就是当初那个 bug）   reflect=2  clamp=15
+[OK] 反射式回弹不会长时间滞留在边界   max_edge_run=2
+```
+
+CI（`.github/workflows/regression.yml`）每次 push 都跑它，并设 `TG_REQUIRE_NODE=1`：
+缺 Node 时 ESM 校验**判失败**而不是静默跳过——否则那一道关会无声消失。整个工作流不连内网、
+不需要任何凭据。
 
 ---
 

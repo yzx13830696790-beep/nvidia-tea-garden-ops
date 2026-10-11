@@ -1,0 +1,52 @@
+name: regression
+
+# 两道关：
+#   1. 引擎自检 —— 用合成字节把补丁引擎的硬规则全钉一遍，任何人克隆下来都能跑
+#   2. md5 回归 —— 需要线上真实 chunk 当夹具，而那是第三方构建产物、不入库，
+#      所以缺失时自动跳过（不是失败）。有夹具时它才是最强的那道关。
+#
+# 本工作流不连任何内网、不需要任何凭据，纯离线逻辑校验。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: regression-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selfcheck:
+    name: 引擎自检 + md5 回归
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: 确认核心库无硬依赖
+        run: |
+          python -c "import sys; sys.path.insert(0,'.'); import tgpatch; \
+          print('tgpatch', tgpatch.__version__, '导入成功（未安装 paramiko）')"
+
+      - name: 引擎自检（合成字节，不依赖专有夹具）
+        env:
+          # 缺 Node 时判失败，而不是静默跳过——否则 ESM 校验会无声消失
+          TG_REQUIRE_NODE: "1"
+        run: python tests/test_engine.py
+
+      - name: md5 回归（夹具缺失时自动跳过）
+        run: python tests/test_pipeline.py
