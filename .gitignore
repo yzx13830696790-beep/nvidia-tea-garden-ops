@@ -1,0 +1,45 @@
+# ---- 凭据与本地配置（绝不入库）----
+.env
+config.toml
+config/config.toml
+*.pem
+*.key
+
+# ---- 线上真实 chunk 夹具（第三方构建产物，不入库）----
+cases/*/fixtures/
+**/fixtures/*.js
+**/fixtures/*.css
+
+# ---- 补丁产物与中间输出 ----
+cases/*/out/
+cases/*/out_*/
+**/out/
+work/
+*.bak-*
+*.patched.js
+
+# ---- 验证产物 ----
+*.png
+!docs/**/*.png
+e2e_*.txt
+*.log
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- Node ----
+node_modules/
+package-lock.json
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

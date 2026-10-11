@@ -1,0 +1,15 @@
+# 复制为 config.toml 后使用（优先级低于 .env 与进程环境变量）。
+# config.toml 已被 .gitignore 排除。
+
+[target]
+host = "192.168.0.100"
+ssh_user = "nvidia"
+ssh_password = "change-me"
+ssh_port = 22
+
+# sudo 口令。留空则沿用 ssh_password；免密 sudo 时显式设为 ""
+sudo_password = ""
+
+container = "tea-garden"
+assets = "/opt/tea-garden/web/dist/assets"
+http_port = 28888

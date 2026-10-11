@@ -1,0 +1,9 @@
+# 核心库只依赖 paramiko；其余为端到端验证所需
+paramiko>=3.4
+
+# 端到端浏览器验证（可选，仅 cases/*/e2e.js 需要）
+# playwright-core>=1.40
+
+# 说明：
+#   Node.js >= 18 用于 ESM 语法校验（scripts/esm_check.cjs）与端到端脚本。
+#   这两个能力都是「验证层」，缺了不影响补丁生成，但会让上线风险显著上升。
